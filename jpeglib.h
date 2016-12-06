@@ -914,6 +914,7 @@ EXTERN(void) jpeg_destroy_decompress (j_decompress_ptr cinfo);
 /* Caller is responsible for opening the file before and closing after. */
 EXTERN(void) jpeg_stdio_dest (j_compress_ptr cinfo, FILE * outfile);
 EXTERN(void) jpeg_stdio_src (j_decompress_ptr cinfo, FILE * infile);
+EXTERN(void) jpeg_stdio_buf JPP((j_compress_ptr cinfo, char * outfile,size_t* outlen));
 
 #if JPEG_LIB_VERSION >= 80 || defined(MEM_SRCDST_SUPPORTED)
 /* Data source and destination managers: memory buffers. */

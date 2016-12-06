@@ -33,8 +33,12 @@ extern void free (void *ptr);
 typedef struct {
   struct jpeg_destination_mgr pub; /* public fields */
 
-  FILE * outfile;               /* target stream */
-  JOCTET * buffer;              /* start of buffer */
+  FILE * outfile;		/* target stream */
+  char * outbuf;		/* target stream */
+  size_t *outBufLen;		/* target stream out length */
+  size_t nOffset;		/* target stream out length */
+  boolean isWF;
+  JOCTET * buffer;		/* start of buffer */
 } my_destination_mgr;
 
 typedef my_destination_mgr * my_dest_ptr;
@@ -115,10 +119,15 @@ empty_output_buffer (j_compress_ptr cinfo)
 {
   my_dest_ptr dest = (my_dest_ptr) cinfo->dest;
 
-  if (JFWRITE(dest->outfile, dest->buffer, OUTPUT_BUF_SIZE) !=
-      (size_t) OUTPUT_BUF_SIZE)
-    ERREXIT(cinfo, JERR_FILE_WRITE);
-
+  if(dest->isWF) {
+      if (JFWRITE(dest->outfile, dest->buffer, OUTPUT_BUF_SIZE) !=
+              (size_t) OUTPUT_BUF_SIZE)
+          ERREXIT(cinfo, JERR_FILE_WRITE);
+  } else {
+      memcpy(dest->outbuf+dest->nOffset,dest->buffer,OUTPUT_BUF_SIZE);
+      dest->nOffset +=OUTPUT_BUF_SIZE;
+      *(dest->outBufLen) = dest->nOffset;
+  }
   dest->pub.next_output_byte = dest->buffer;
   dest->pub.free_in_buffer = OUTPUT_BUF_SIZE;
 
@@ -175,15 +184,22 @@ term_destination (j_compress_ptr cinfo)
 
   /* Write any data remaining in the buffer */
   if (datacount > 0) {
-    if (JFWRITE(dest->outfile, dest->buffer, datacount) != datacount)
-      ERREXIT(cinfo, JERR_FILE_WRITE);
+      if(dest->isWF) {
+          if (JFWRITE(dest->outfile, dest->buffer, datacount) != datacount)
+              ERREXIT(cinfo, JERR_FILE_WRITE);
+      } else {
+          memcpy(dest->outbuf+dest->nOffset,dest->buffer,datacount);
+          dest->nOffset += datacount;
+          *(dest->outBufLen) = dest->nOffset;
+      }
   }
+  if(dest->isWF) {
   fflush(dest->outfile);
   /* Make sure we wrote the output file OK */
   if (ferror(dest->outfile))
     ERREXIT(cinfo, JERR_FILE_WRITE);
 }
-
+}
 #if JPEG_LIB_VERSION >= 80 || defined(MEM_SRCDST_SUPPORTED)
 METHODDEF(void)
 term_mem_destination (j_compress_ptr cinfo)
@@ -224,8 +240,36 @@ jpeg_stdio_dest (j_compress_ptr cinfo, FILE * outfile)
   dest->pub.empty_output_buffer = empty_output_buffer;
   dest->pub.term_destination = term_destination;
   dest->outfile = outfile;
+  dest->isWF = TRUE;
 }
 
+GLOBAL(void)
+jpeg_stdio_buf (j_compress_ptr cinfo, char* outbuf,size_t *outlen)
+{
+  my_dest_ptr dest;
+
+  /* The destination object is made permanent so that multiple JPEG images
+   * can be written to the same file without re-executing jpeg_stdio_dest.
+   * This makes it dangerous to use this manager and a different destination
+   * manager serially with the same JPEG object, because their private object
+   * sizes may be different.  Caveat programmer.
+   */
+  if (cinfo->dest == NULL) {	/* first time for this JPEG object? */
+    cinfo->dest = (struct jpeg_destination_mgr *)
+      (*cinfo->mem->alloc_small) ((j_common_ptr) cinfo, JPOOL_PERMANENT,
+				  sizeof(my_destination_mgr));
+  }
+
+  dest = (my_dest_ptr) cinfo->dest;
+  dest->pub.init_destination = init_destination;
+  dest->pub.empty_output_buffer = empty_output_buffer;
+  dest->pub.term_destination = term_destination;
+  dest->outbuf = outbuf;
+  dest->outBufLen = outlen;
+  dest->nOffset = 0;
+  *(dest->outBufLen) = 0;
+  dest->isWF = FALSE;
+}
 
 #if JPEG_LIB_VERSION >= 80 || defined(MEM_SRCDST_SUPPORTED)
 /*
